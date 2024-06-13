@@ -1,0 +1,5 @@
+### GET request to example server
+GET http://localhost:3000/decoders/params/simple/%7Bid%7D
+Accept: x-application/api-doc-fragment
+
+###
