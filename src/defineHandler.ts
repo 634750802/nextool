@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { undefined } from 'zod';
 import { NextRouteErrorParser } from './exceptionParsers/NextRouteErrorParser';
 import { ResponseErrorParser } from './exceptionParsers/ResponseErrorParser';
+import { ZodErrorParser } from './exceptionParsers/ZodErrorParser';
 import { body } from './middlewares';
 import { closeRouteDoc, startRouteDoc } from './openapi';
 import { DirectResponseParser } from './responseParsers/DirectResponseParser';
@@ -93,6 +94,7 @@ export function defineHandler<
   const exceptionParsers: RouteExceptionParser<any>[] = [
     NextRouteErrorParser,
     ResponseErrorParser,
+    ZodErrorParser,
   ];
   const responseHeadersMutations: ((headers: Headers) => void)[] = [];
 
