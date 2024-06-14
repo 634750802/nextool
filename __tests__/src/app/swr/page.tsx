@@ -19,10 +19,10 @@ export default function Page () {
   return (
     <div>
       <div>
-        {isLoading ? 'loading' : 'loaded'}: {data?.foo}
+        {isLoading ? 'loading' : 'not loading'}: {data?.foo}
       </div>
       <div>
-        {isLoading2 ? 'loading' : 'loaded'}: {data2?.foo}
+        {isLoading2 ? 'loading' : 'not loading'}: {data2?.foo}
       </div>
     </div>
   );

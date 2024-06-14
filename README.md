@@ -6,7 +6,9 @@ Next tools.
   - defineHandler
   - body / path params / search params validation and documentation with zod + openapi
 - route test utils
-  - mock handler request
+  - mockAppRouterRequest
+  - mockAppRouterPage
+  - mockAppRouterLayout
 
 ## Have a try
 
