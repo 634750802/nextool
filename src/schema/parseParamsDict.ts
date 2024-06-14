@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import type { ParamsDict } from '../requestAsyncLocalStorage';
+import type { ParamsDict } from '../types';
 import { isArrayType } from './isArrayType';
 
 export function parseParamsDict<Z extends z.ZodType> (dict: ParamsDict, schema: Z): z.infer<Z> {

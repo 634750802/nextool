@@ -1,9 +1,10 @@
 import { defineHandler } from '../../../../../src/defineHandler';
+import { streamResponse } from '../../../../../src/middlewares/streamResponse';
 
 export const GET = defineHandler({
-  headers: {
-    'Content-Type': 'text/any-stream',
-  },
+  use: [
+    streamResponse('text/any-stream', new TextEncoder()),
+  ],
 }, async function* () {
   yield 'hello';
   yield ', ';

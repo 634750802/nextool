@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { defineHandler, doc, params, responseDoc, searchParams } from '../../../../../../../src/defineHandler';
 
-const idParam = z.string().transform(e => parseInt(e)).openapi('PathID');
+const idParam = z.string()
+  .refine(input => z.util.isInteger(Number(input)))
+  .transform(e => Number(e))
+  .openapi('PathID');
 
 export const GET = defineHandler({
   use: [
@@ -11,7 +14,7 @@ export const GET = defineHandler({
       operationId: 'getWithSimpleParams',
       tags: ['DocTest'],
     }),
-    responseDoc(200, 'Just good response', z.object({
+    responseDoc(200, 'Just good response', 'application/json', z.object({
       id: z.number(),
     })),
     params(z.object({

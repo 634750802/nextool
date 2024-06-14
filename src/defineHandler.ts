@@ -1,126 +1,45 @@
-import type { RouteConfig } from '@asteasolutions/zod-to-openapi/dist/openapi-registry';
-import { notFound } from 'next/navigation';
 import type { NextRequest } from 'next/server';
-import { type AnyZodObject, undefined, z, type ZodEffects, type ZodType } from 'zod';
-import { ContentType, decodeRequestBody } from './decoders/decodeRequestBody';
-import { decodeRequestStream, type StreamDecoder } from './decoders/decodeRequestStream';
-import { closeRouteDoc, mutateOperationDoc, startRouteDoc } from './openapi';
-import { mutateResponseHeaders, type RequestContext } from './requestAsyncLocalStorage';
-import { parseParamsDict } from './schema/parseParamsDict';
-import { wrap } from './wrap';
+import { undefined } from 'zod';
+import { NextRouteErrorParser } from './exceptionParsers/NextRouteErrorParser';
+import { ResponseErrorParser } from './exceptionParsers/ResponseErrorParser';
+import { body } from './middlewares';
+import { closeRouteDoc, startRouteDoc } from './openapi';
+import { DirectResponseParser } from './responseParsers/DirectResponseParser';
+import { wrap } from './routeWrapper';
+import { type RequestContext, type RouteExceptionParser, type RouteResponseParser } from './types';
 
-interface HandlerMiddleware {
-  (request: NextRequest, context: RequestContext): Promise<void> | void;
+const SYMBOL_DOCGEN = Symbol('BaseMiddleware#docGen');
+const SYMBOL_FOR_TYPING = Symbol('BaseMiddleware#returnType');
 
+interface BaseMiddleware<T, Returns = unknown> {
+  (request: NextRequest, context: RequestContext): Promise<T> | T;
+
+  mutateResponseHeaders?: (headers: Headers) => void;
+  addResponseParsers?: RouteResponseParser<any>[];
+  addExceptionParsers?: RouteExceptionParser<unknown>[];
+
+  [SYMBOL_DOCGEN]?: () => void;
+  [SYMBOL_FOR_TYPING]?: Returns;
+}
+
+export interface HandlerMiddleware<Returns = void> extends BaseMiddleware<void, Returns> {
   field?: void;
 }
 
-export interface HandlerContextualMiddleware<Field extends string | symbol, Value> {
-  (request: NextRequest, context: RequestContext): Promise<Value> | Value;
-
+export interface HandlerContextualMiddleware<Field extends string | symbol, Value, Returns = void> extends BaseMiddleware<Value, Returns> {
   field: Field;
 }
 
-function withDocGen<Field extends string | symbol, Value> (fn: HandlerContextualMiddleware<Field, Value>, docGen: () => void): HandlerContextualMiddleware<Field, Value> {
-  const middleware: HandlerContextualMiddleware<Field, Value> = (request, context) => {
-    if (isDocGenRequest(request)) {
-      docGen();
-      return undefined as any;
-    }
-    return fn(request, context);
-  };
-
-  middleware.field = fn.field;
+export function withDocGen<M extends BaseMiddleware<any>> (middleware: M, docGen: () => void): M {
+  middleware[SYMBOL_DOCGEN] = docGen;
   return middleware;
 }
 
-function docGen (cb: () => void): HandlerMiddleware {
-  return ((request: NextRequest) => {
-    if (isDocGenRequest(request)) {
-      cb();
-    }
-  });
+export function docGenOnly (docGenFn: () => void): HandlerMiddleware {
+  return withDocGen(() => {}, docGenFn);
 }
 
-export function body<Z extends ZodType> (schema: Z): HandlerContextualMiddleware<'body', z.infer<Z>> {
-  const middleware: HandlerContextualMiddleware<'body', z.infer<Z>> = (request) => decodeRequestBody(request, schema, { accept: [ContentType.json, ContentType.multipart] });
-  middleware.field = 'body';
-
-  return withDocGen(middleware, () => {
-    mutateOperationDoc(operation => {
-      operation.request = { ...operation.request, body: { content: { 'application/json': { schema } } } };
-    });
-  });
-}
-
-export function params<Z extends AnyZodObject | ZodEffects<AnyZodObject, unknown, unknown>> (schema: Z): HandlerContextualMiddleware<'params', z.infer<Z>> {
-  const middleware: HandlerContextualMiddleware<'params', z.infer<Z>> = (_, context) => {
-    try {
-      return parseParamsDict(context.params, schema);
-    } catch {
-      notFound();
-    }
-  };
-  middleware.field = 'params';
-
-  return withDocGen(middleware, () => {
-    mutateOperationDoc(operation => {
-      operation.request = { ...operation.request, params: schema };
-    });
-  });
-}
-
-export function searchParams<Z extends AnyZodObject | ZodEffects<AnyZodObject, unknown, unknown>> (schema: Z): HandlerContextualMiddleware<'searchParams', z.infer<Z>> {
-  const middleware: HandlerContextualMiddleware<'searchParams', z.infer<Z>> = (_, context) => parseParamsDict(context.searchParams ?? {}, schema);
-  middleware.field = 'searchParams';
-
-  return withDocGen(middleware, () => {
-    mutateOperationDoc(operation => {
-      operation.request = { ...operation.request, query: schema };
-    });
-  });
-}
-
-export function stream<T> (decoder: StreamDecoder<T>, accept: string = ContentType.octetStream): HandlerContextualMiddleware<'body', AsyncGenerator<T, undefined>> {
-  const middleware: HandlerContextualMiddleware<'body', AsyncGenerator<T, undefined>> = (request) => decodeRequestStream(request, { decoder });
-  middleware.field = 'body';
-
-  return withDocGen(middleware, () => {
-    mutateOperationDoc(operation => {
-      operation.requestBody = {
-        content: {
-          [accept]: {},
-        },
-      };
-    });
-  });
-}
-
-export function doc (doc: Pick<RouteConfig, 'description' | 'summary' | 'operationId' | 'tags' | 'externalDocs' | 'deprecated'>) {
-  return docGen(() => {
-    mutateOperationDoc(operation => {
-      Object.assign(operation, doc);
-    });
-  });
-}
-
-export function responseDoc<Z extends ZodType> (status: number, description: string, schema: Z): HandlerMiddleware {
-  return docGen(() => {
-    mutateOperationDoc(operation => {
-      operation.responses = {
-        ...operation.responses,
-        [String(status)]: {
-          description,
-          content: {
-            'application/json': {
-              schema,
-            },
-          },
-        },
-      };
-    });
-  });
-}
+export { body, params, searchParams, stream, doc, responseDoc } from './middlewares';
 
 type Resolve<T> =
   T extends HandlerContextualMiddleware<infer Key, infer Value>
@@ -135,44 +54,66 @@ type ResolveMiddlewareData<T extends Readonly<(HandlerMiddleware | HandlerContex
       ? Resolve<Single> & ResolveMiddlewareData<Rest>
       : never
 
+type ResolveReturns<T> =
+  T extends BaseMiddleware<any, infer T>
+    ? T
+    : void
+
+type MergeReturns<A, B> =
+  A extends void
+    ? B
+    : B extends void
+      ? A
+      : A | B;
+
+type ResolveMiddlewareReturns<T extends Readonly<BaseMiddleware<any>[]>> =
+  T extends []
+    ? void
+    : T extends Readonly<[infer Single, ...infer Rest extends Readonly<BaseMiddleware<any>[]>]>
+      ? MergeReturns<ResolveReturns<Single>, ResolveMiddlewareReturns<Rest>>
+      : void;
+
+type VoidToAny<T> = T extends void ? any : T;
+
 export interface DefineHandlerProps<
-  Use extends readonly (HandlerMiddleware | HandlerContextualMiddleware<any, any>)[]
+  Use extends readonly (HandlerMiddleware<any> | HandlerContextualMiddleware<any, any, any>)[]
 > {
   use?: Readonly<Use>;
-  headers?: Record<string, string>;
 }
 
 export function defineHandler<
-  Use extends Readonly<(HandlerMiddleware | HandlerContextualMiddleware<any, any>)[]>
+  Use extends Readonly<(HandlerMiddleware<any> | HandlerContextualMiddleware<any, any, any>)[]>
 > (
-  { use, headers: initHeaders }: DefineHandlerProps<Use>,
-  handle: (data: ResolveMiddlewareData<Use>) => any,
+  { use }: DefineHandlerProps<Use>,
+  handle: (data: ResolveMiddlewareData<Use>) => VoidToAny<ResolveMiddlewareReturns<Use>>,
 ) {
+  const responseParsers: RouteResponseParser<any>[] = [
+    DirectResponseParser,
+  ];
+  const exceptionParsers: RouteExceptionParser<any>[] = [
+    NextRouteErrorParser,
+    ResponseErrorParser,
+  ];
+  const responseHeadersMutations: ((headers: Headers) => void)[] = [];
+
+  use?.forEach(({ addExceptionParsers, mutateResponseHeaders, addResponseParsers }) => {
+    if (addExceptionParsers) {
+      exceptionParsers.push(...addExceptionParsers);
+    }
+    if (addResponseParsers) {
+      responseParsers.push(...addResponseParsers);
+    }
+    if (mutateResponseHeaders) {
+      responseHeadersMutations.push(mutateResponseHeaders);
+    }
+  });
+
   return wrap(async (request, context) => {
-    const isDocGen = isDocGenRequest(request);
-
-    if (isDocGen) {
+    if (isDocGenRequest(request)) {
       startRouteDoc();
-    }
-
-    const data = {} as any;
-    for (let middleware of use ?? []) {
-      const value = await middleware(request, context);
-      if (middleware.field) {
-        if (middleware.field in data) {
-          throw new Error(`Conflict contextual middleware field ${middleware.field}`);
-        }
-        data[middleware.field] = value;
-      }
-    }
-
-    if (initHeaders) {
-      mutateResponseHeaders(headers => {
-        Object.entries(initHeaders).forEach(([k, v]) => headers.set(k, v));
+      use?.forEach(middleware => {
+        middleware[SYMBOL_DOCGEN]?.();
       });
-    }
-
-    if (isDocGen) {
       closeRouteDoc(
         request.method.toLowerCase() as any,
         request.nextUrl.pathname
@@ -180,9 +121,25 @@ export function defineHandler<
           .replaceAll(encodeURIComponent('}'), '}'),
       );
       return undefined;
-    }
+    } else {
+      const data = {} as any;
 
-    return await handle(data);
+      for (let middleware of use ?? []) {
+        const value = await middleware(request, context);
+        if (middleware.field) {
+          if (middleware.field in data) {
+            throw new Error(`Conflict contextual middleware field ${middleware.field}`);
+          }
+          data[middleware.field] = value;
+        }
+      }
+
+      return handle(data);
+    }
+  }, {
+    responseParsers,
+    exceptionParsers,
+    responseHeadersMutations,
   });
 }
 
